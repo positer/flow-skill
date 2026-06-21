@@ -56,6 +56,17 @@ flow-skill/
 | **Editor** | `FlowEditor.html` | Visual workflow editor (drag-free: click-to-edit tree) |
 | **Skill** | `SKILL.md` | OpenCode skill definition with auto-trigger descriptions |
 
+### Plugin Architecture
+
+Flow ships with two companion plugins that auto-activate when the host agent lacks native support:
+
+| Plugin | Trigger | Provides |
+|--------|---------|----------|
+| `OpenCode_goal_plugin` | Agent has no `get_goal`/`update_goal` tools | `GoalManager` — JSON-backed goal tracking |
+| `FlowDialogPlugin` | Agent has no `opencode.run_flow` tool | `FlowDialogBridge` — step-based workflow execution |
+
+**Goal mode integration**: When a workflow reaches a `Goal`-mode dialog component, the bridge calls `OpenCode_goal_plugin`'s `set_goal()` to establish the objective and `update_goal("completed")` on completion. This means every Flow workflow's Goal step automatically benefits from goal persistence — whether through OpenCode's native tools or the plugin fallback.
+
 ### Key Design Decisions
 
 - **Generator protocol**: `run_workflow_iter()` uses `yield`/`send` instead of blocking I/O, allowing external agents to drive execution step by step
@@ -112,9 +123,18 @@ python flow.py run <name> --true   # Smoke test (all conditions true)
 
 ## Agent Integration
 
+Both plugins auto-detect native support and fall back gracefully:
+
 ```python
+from OpenCode_goal_plugin import ensure_goal_capability
 from FlowDialogPlugin import ensure_flow_capability
 
+# Goal capability (used by Goal-mode dialog components)
+goal_tools = ensure_goal_capability()
+if goal_tools:
+    goal_tools["set_goal"]("Complete deployment workflow")
+
+# Flow dialog capability (workflow execution bridge)
 flow_tools = ensure_flow_capability()
 if flow_tools:
     bridge = flow_tools["create_bridge"]("deploy", user_input="v2")
