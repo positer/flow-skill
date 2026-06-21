@@ -14,6 +14,22 @@ python flow.py run <name>   # Execute workflow (fuzzy name match)
 python flow.py serve        # Launch HTML tree editor
 ```
 
+## Theoretical Research Pipeline
+
+`theoretical-research` is a 42-component (30 dialog + 12 logic) generic workflow for theoretical physics/mathematics research. It captures the full pipeline:
+
+1. **Phase 0-2: Foundations** — Workspace audit, literature survey, mathematical framework setup
+2. **Phase 3-6: Core Computation** — 8-step Bosonic sector → Fermionic extension → High-order singularities → Renormalization
+3. **Phase 7-8: Classification** — Lie subgroup topology → Manifold topology → Unified theorem
+4. **Phase 9-10: Verification** — n=5/pp-wave specialization, LaTeX draft assembly
+5. **Phase 11-15: Review Cycle** — 4 independent subagent review → revision loop → 2 consecutive clean confirmation rounds → final paper assembly
+
+All prompts use `{#prompt#}` placeholders for injection of specific research problems at runtime.
+
+```bash
+python flow.py run theoretical-research -i "Ads^n x S^m three-string vertex unified theory"
+```
+
 ## Project Structure
 
 ```
@@ -28,9 +44,10 @@ flow-skill/
 │
 ├── Flow/                        # Workflow definitions (*.Flow.json)
 │   ├── Flow.md                  # Format specification (139 lines)
-│   ├── add_list_sum.Flow.json   # Sample: 8-component workflow
-│   ├── feature-dev.Flow.json    # Sample: 5-component feature dev
-│   └── flow-test.Flow.json      # Test: 7-component (all types + logic jumps)
+│   ├── add_list_sum.Flow.json              # Sample: 8-component workflow
+│   ├── feature-dev.Flow.json               # Sample: 5-component feature dev
+│   ├── flow-test.Flow.json                 # Test: 7-component (all types + logic jumps)
+│   └── theoretical-research.Flow.json      # Generic: 42-component theoretical research pipeline
 │
 ├── FlowDialogPlugin/            # Dialog bridge for agents without native flow
 │   ├── __init__.py              # Package exports + auto-detection
@@ -109,6 +126,7 @@ Evaluates a condition → jumps to `goto_true` (implemented) or `goto_false` (no
 | `flow delete <name>` | Delete a workflow |
 | `flow run <name> -i "..." [--true/--false]` | Execute workflow (fuzzy name match) |
 | `flow auto <text>` | Auto-trigger: scan text for workflow name matches |
+| `flow gen <description>` | Generate workflow from natural language (use `{#prompt#}` for templates) |
 | `flow cycles <name> [--all]` | Analyze logic flow for potential cycles |
 | `flow sum <name> [--workspace] [--force]` | Generate workflow from workspace analysis |
 | `flow serve -p 8765` | Launch HTML tree editor |

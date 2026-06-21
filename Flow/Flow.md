@@ -136,4 +136,7 @@ run_workflow("deploy", "Flow/", user_input="deploy v2", llm_eval=my_llm_eval)
 | `flow cycles <name> [--all]` | Analyze workflow structure for potential cycles |
 | `flow sum <name> [--workspace] [--force]` | Generate workflow from workspace analysis |
 | `flow sum <name> --print-context` | Show workspace context without generating |
+| `flow gen <description>` | Generate a workflow from natural language. Use `{#prompt#}` for template placeholders. |
+| `flow gen <description> --name my_workflow` | Generate with explicit name |
+| `flow gen <description> --force` | Overwrite existing workflow |
 | `flow serve -p 8765` | Launch HTML editor |

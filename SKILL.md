@@ -1,6 +1,6 @@
 ---
 name: flow
-description: "Multi-agent workflow system with Python CLI, HTML tree editor, and agent-integrated FlowDialogPlugin. Create, edit, validate, and execute sequential workflows using dialog (Build/Plan/Goal) and logic (conditional branching) components saved as *.Flow.json files. FlowDialogPlugin provides step-based dialog bridge for agents without native flow support. Triggers include: /Flow, flow workflow, flow list, flow run, flow new, flow check, flow show, flow validate, flow serve, flow sum, flow dashboard, FlowEditor, workflow editor, *.Flow.json, workflow file, run workflow, execute workflow, conditional workflow, dialog component, logic component, goto branch, {#prompt#}, FlowDialogPlugin, flow bridge, step-based execution, dialog plugin, Flow工作流, 工作流编辑器, 工作流启动, 生成工作流, 总结工作流, 对话插件, 流式执行."
+description: "Multi-agent workflow system with Python CLI, HTML tree editor, and agent-integrated FlowDialogPlugin. Create, edit, validate, and execute sequential workflows using dialog (Build/Plan/Goal) and logic (conditional branching) components saved as *.Flow.json files. FlowDialogPlugin provides step-based dialog bridge for agents without native flow support. Triggers include: /Flow, flow workflow, flow list, flow run, flow new, flow check, flow show, flow validate, flow serve, flow gen, flow sum, flow dashboard, FlowEditor, workflow editor, *.Flow.json, workflow file, run workflow, execute workflow, conditional workflow, dialog component, logic component, goto branch, {#prompt#}, FlowDialogPlugin, flow bridge, step-based execution, dialog plugin, Flow工作流, 工作流编辑器, 工作流启动, 生成工作流, 总结工作流, 对话插件, 流式执行."
 license: Proprietary
 ---
 
@@ -37,6 +37,7 @@ Output example:
 | `flow delete <name>` | Delete a workflow |
 | `flow run <name> -i "..."` | Execute workflow (**fuzzy name matching**) |
 | `flow auto <text>` | Auto-trigger: scan text for matching workflow names |
+| `flow gen <description>` | Generate workflow from natural language (use `{#prompt#}` for templates) |
 | `flow sum <name>` | Generate workflow from workspace analysis |
 | `flow serve -p 8765` | Launch HTML editor |
 
@@ -175,10 +176,6 @@ FlowDialogPlugin/            # Built-in flow dialog bridge
 flow.py                      # CLI + execution engine
 FlowEditor.html              # Visual workflow editor
 SKILL.md                     # This file
-```
-
-## File Structure
-
 ```
 Flow/
 ├── Flow.md                  # Format specification (auto-created)

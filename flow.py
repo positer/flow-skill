@@ -46,7 +46,16 @@ class FlowWorkflow:
 
 # ─── Loader ───────────────────────────────────────────────────────────────────
 
-WORKFLOW_DIR = os.environ.get("FLOW_DIR", "Flow")
+_SCRIPT_DIR = Path(__file__).parent.resolve()
+_SKILL_FLOW_DIR = str(_SCRIPT_DIR / "Flow")
+
+# Default: use skill's Flow/ dir (alongside SKILL.md). Fallback: local "Flow".
+# Override with FLOW_DIR env var or --dir flag.
+_DEFAULT_FLOW_DIR = _SKILL_FLOW_DIR
+if not (_SCRIPT_DIR / "SKILL.md").is_file():
+    _DEFAULT_FLOW_DIR = "Flow"
+
+WORKFLOW_DIR = os.environ.get("FLOW_DIR", _DEFAULT_FLOW_DIR)
 
 def resolve_dir(d: str | None = None) -> str:
     return d or WORKFLOW_DIR
@@ -492,6 +501,237 @@ def run_workflow_iter(name: str, flow_dir: str, user_input: str | None = None):
     yield {"type": "complete", "message": "Workflow complete."}
 
 
+# ─── Gen (prompt → workflow generation) ─────────────────────────────────────
+
+def _gen_name_from_text(text: str) -> str:
+    """Generate a kebab-case workflow name from the first meaningful words."""
+    import re
+    cleaned = re.sub(r'\{#prompt#\}', '', text).strip()
+    cleaned = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff\s_-]', '', cleaned)
+    # Split on separators first, take first meaningful words
+    sep_parts = re.split(r'[\s,;.]+', cleaned)
+    stopwords = {"the", "a", "an", "to", "of", "in", "for", "and", "or", "is", "it",
+                 "then", "after", "finally", "next", "with", "by", "at", "on"}
+    meaningful = [p.lower() for p in sep_parts if p.lower() not in stopwords and len(p) > 1]
+    if not meaningful:
+        return "generated_workflow"
+    name = "-".join(meaningful[:4])
+    name = re.sub(r'[-]+', '-', name.strip('-'))
+    return name[:50] or "generated_workflow"
+
+
+def _gen_split_steps(text: str) -> list[str]:
+    """Split a description into individual step descriptions."""
+    import re
+    # Normalize separators
+    separators = [
+        r',\s*and\s+', r'\s+and\s+then\s+', r'\s+then\s+',
+        r'\s+after\s+that\s*', r'\s+finally\s+', r'\s+next\s*,\s*',
+        r'\s+after\s+which\s*', r'\s+afterwards\s*', r'\s+subsequently\s*',
+        r'\.\s+',
+    ]
+    pattern = '|'.join(separators)
+    raw = re.split(pattern, text)
+    steps = [s.strip().rstrip('.') for s in raw if s.strip()]
+    return steps if len(steps) > 1 else [text]
+
+
+def _gen_is_condition(step: str) -> bool:
+    """Detect if a step describes a logic condition (check/verify/confirm).
+
+    Heuristics (checked in order):
+      1. Step starts with an action verb → never a condition
+      2. Step ends with ? → condition
+      3. Step IS a short check phrase → condition
+      4. Step contains condition keywords → condition
+      5. Otherwise → dialog action
+    """
+    import re
+    s = step.strip().lower()
+
+    # Action verbs first (override): step starts with an action command
+    action_verbs = [
+        r'^implement', r'^create\b', r'^write\b', r'^build\b', r'^add\b',
+        r'^read\b', r'^explore\b', r'^update\b', r'^refactor\b', r'^fix\b',
+        r'^test\b', r'^deploy\b', r'^set\s+up', r'^configure\b', r'^run\b',
+        r'^make\b', r'^generate\b', r'^delete\b', r'^remove\b', r'^rename\b',
+        r'^move\b', r'^copy\b', r'^setup\b', r'^init\b', r'^prepare\b',
+        r'^review\b', r'^analyze\b', r'^document\b', r'^research\b', r'^find\b',
+    ]
+    for pat in action_verbs:
+        if re.search(pat, s):
+            return False
+
+    # Ends with question mark
+    if s.rstrip('?.!').endswith('?'):
+        return True
+
+    # Short pure-check phrases (≤6 words, starts with check/verify)
+    short_check = r'^(check|verify|validate|confirm|ensure)\s'
+    if re.search(short_check, s) and len(s.split()) <= 8:
+        return True
+
+    # Contains condition keywords
+    logic_triggers = [
+        r'\bcheck\s+if\b', r'\bverify\s+(that\s+)?', r'\bvalidate\b', r'\bconfirm\b',
+        r'\bensure\b', r'\bis\s+it\b', r'\bare\s+there\b', r'\bdoes\s+it\b',
+        r'\bwhether\b', r'\bimplemented\?', r'\bready\?', r'\bcomplete\?',
+        r'\bexists\?', r'\bpassing\?',
+        r'\bis\s+\w+\s+(ready|done|complete|implemented)',
+        r'\bare\s+\w+\s+(ready|done|complete|implemented)',
+    ]
+    for pat in logic_triggers:
+        if re.search(pat, s):
+            return True
+
+    return False
+
+
+def _gen_assign_mode(index: int, total: int, step: str) -> str:
+    """Assign dialog mode based on position: first→Plan, last→Goal, middle→Build."""
+    if total == 1:
+        return "Build"
+    if index == 0:
+        return "Plan"
+    if index == total - 1:
+        return "Goal"
+    return "Build"
+
+
+def cmd_gen(args):
+    """Generate a workflow from a natural language description.
+    
+    Supports both concrete workflows (specific instructions) and template
+    workflows (with {#prompt#} placeholders for generic use).
+    
+    Strategy:
+      1. Split description into steps (by "then", ". ", etc.)
+      2. Classify each step as condition (check/verify) or action (do)
+      3. Build components by interleaving conditions with their actions.
+         Pattern: Action → [Condition → Action × N → Verify] → Goal
+         Each condition's goto_false jumps to its nearest preceding action,
+         goto_true skips ahead past the implementation to the next condition/action.
+    """
+    d = resolve_dir(args.dir)
+    text = args.text
+
+    if not text:
+        print("[Flow] No description provided.", file=sys.stderr)
+        sys.exit(1)
+
+    name = args.name or _gen_name_from_text(text)
+    
+    existing = load_workflow(name, d)
+    if existing is not None and not args.force:
+        print(f"Workflow '{name}' already exists. Use --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
+    is_template = "{#prompt#}" in text
+    raw_steps = _gen_split_steps(text)
+
+    # Classify each step
+    classified = []
+    for s in raw_steps:
+        ss = s.strip()
+        if ss:
+            classified.append((ss, _gen_is_condition(ss)))
+
+    if not classified:
+        print("[Flow] Could not parse description into steps.", file=sys.stderr)
+        sys.exit(1)
+
+    # Build component list
+    comps = []
+
+    for idx, (step_text, is_cond) in enumerate(classified):
+        if is_cond:
+            cid = len(comps)
+            # goto_false = next component (implement the thing being checked)
+            goto_false = cid + 1
+            # goto_true = skip implementation, go past it
+            # Scan ahead to find what component follows the "implement" step
+            # The "implement" step is the component right after us (goto_false)
+            # So goto_true = goto_false + 1 (the step after implementation)
+            goto_true = goto_false + 1
+            comps.append({
+                "type": "logic",
+                "id": cid,
+                "prompt": step_text,
+                "goto_true": goto_true,
+                "goto_false": goto_false
+            })
+        else:
+            cid = len(comps)
+            mode = _gen_assign_mode(len(comps), len(classified) * 2, step_text)
+            # If previous component is a logic, promote to Build
+            if comps and comps[-1].get("type") == "logic":
+                mode = "Build"
+            comps.append({
+                "type": "dialog",
+                "id": cid,
+                "mode": mode,
+                "prompt": step_text
+            })
+
+    # If last component is logic, add a completion Goal dialog
+    if comps and comps[-1]["type"] == "logic":
+        comps.append({
+            "type": "dialog",
+            "id": len(comps),
+            "mode": "Goal",
+            "prompt": f"Verify all requirements are met: {classified[-1][0]}"
+        })
+
+    # Renumber IDs sequentially
+    for i, c in enumerate(comps):
+        c["id"] = i
+
+    # Fix logic goto targets after renumbering.
+    # If goto points past the last component, set it to a terminal value:
+    # the last dialog component (clean ending) if one exists, otherwise the last component.
+    n_comps = len(comps)
+    term_id = n_comps - 1
+    # Prefer the last DIALOG component as terminal (Goal mode usually)
+    for c in reversed(comps):
+        if c["type"] == "dialog":
+            term_id = c["id"]
+            break
+    for c in comps:
+        if c["type"] == "logic":
+            if c["goto_true"] > n_comps - 1:
+                c["goto_true"] = term_id
+            if c["goto_false"] > n_comps - 1:
+                c["goto_false"] = term_id
+
+    wf = FlowWorkflow(name)
+    for c_data in comps:
+        t = c_data["type"]
+        if t == "dialog":
+            wf.components.append(FlowDialogComponent(c_data))
+        elif t == "logic":
+            wf.components.append(FlowLogicComponent(c_data))
+
+    save_workflow(wf, d)
+    
+    dc = sum(1 for c in wf.components if c.type == "dialog")
+    lc = sum(1 for c in wf.components if c.type == "logic")
+    template_tag = " [TEMPLATE]" if is_template else ""
+    print(f"Created: {d}/{name}.Flow.json{template_tag}")
+    print(f"  Name: {name}")
+    print(f"  Components: {len(wf.components)} ({dc} dialog + {lc} logic)")
+    print(f"  Description: {describe_workflow(name, d)}")
+    if is_template:
+        print(f"  Template: uses {'{#prompt#}'} — accepts user input at runtime")
+
+    for c in sorted(wf.components, key=lambda x: x.id):
+        if isinstance(c, FlowDialogComponent):
+            pr = c.prompt[:60] + "..." if len(c.prompt) > 60 else c.prompt
+            print(f"    [{c.id:02d}] DIALOG  mode={c.mode:5s}  {pr}")
+        elif isinstance(c, FlowLogicComponent):
+            pr = c.prompt[:60] + "..." if len(c.prompt) > 60 else c.prompt
+            print(f"    [{c.id:02d}] LOGIC   T->{c.goto_true} F->{c.goto_false}  {pr}")
+
+
 # ─── Sum (workspace analysis → workflow generation) ─────────────────────────
 
 def cmd_sum(args):
@@ -934,6 +1174,12 @@ def main():
 
     p_check = sub.add_parser("check", help="Validate all workflows")
     p_check.set_defaults(func=cmd_check)
+
+    p_gen = sub.add_parser("gen", help="Generate workflow from natural language description")
+    p_gen.add_argument("text", help="Description of the workflow (use {#prompt#} for template placeholders)")
+    p_gen.add_argument("--name", "-n", default="", help="Workflow name (auto-generated from text if omitted)")
+    p_gen.add_argument("--force", "-f", action="store_true", help="Overwrite if exists")
+    p_gen.set_defaults(func=cmd_gen)
 
     p_cycles = sub.add_parser("cycles", help="Analyze workflow structure for potential cycles")
     p_cycles.add_argument("name", nargs="?", default="", help="Workflow name (omit or --all for all)")
