@@ -24,14 +24,35 @@ python flow.py run <name>   # Execute workflow (fuzzy name match)
 python flow.py serve        # Launch HTML tree editor
 ```
 
+## Featured Example: Theoretical Research Pipeline
+
+`theoretical-research` is a 42-component (30 dialog + 12 logic) workflow that automates a complete theoretical physics/mathematics research pipeline — from literature audit to final paper assembly.
+
+```bash
+python flow.py run theoretical-research -i "Ads^n x S^m three-string vertex unified theory"
+```
+
+**Pipeline phases:**
+
+| Phase | Components | Description |
+|-------|-----------|-------------|
+| 0–2 | Plan + Logic + Build | Workspace audit, literature survey, math framework setup |
+| 3–6 | Build × 4 + Logic | Core computation steps with SymPy verification |
+| 7–8 | Plan + Build × 2 + Logic | Lie subgroup & manifold topology classification |
+| 9–10 | Build × 2 + Logic | Unified theorem → specialization & limit verification |
+| 11–15 | Build × 9 + Logic × 3 | 4-way subagent review → revision → 2 clean confirmation rounds → final LaTeX |
+
+All prompts use `{#prompt#}` placeholders for injection of specific research problems at runtime. The workflow enforces mathematical rigor via SymPy symbolic verification at each computation step, and quality via independent multi-agent peer review with iteration gates.
+
 ## Project Structure
 
 ```
 Flow/
-├── Flow.md                     # Format specification
-├── add_list_sum.Flow.json      # Sample: 8-component workflow
-├── feature-dev.Flow.json       # Sample: 5-component feature dev
-└── flow-test.Flow.json         # 7-component test (all types + jumps)
+├── Flow.md                           # Format specification
+├── add_list_sum.Flow.json            # Sample: 8-component workflow
+├── feature-dev.Flow.json             # Sample: 5-component feature dev
+├── flow-test.Flow.json               # 7-component test (all types + jumps)
+└── theoretical-research.Flow.json    # 42-component theoretical research pipeline
 
 flow.py                         # CLI engine + workflow runner
 FlowEditor.html                 # Visual tree editor (standalone HTML)

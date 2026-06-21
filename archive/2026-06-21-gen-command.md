@@ -23,6 +23,11 @@ Added `flow gen <description>` that generates `.Flow.json` workflows from natura
 - `Flow/Flow.md`: CLI table + gen rows
 - `archive/2026-06-21-gen-command.md`: this file
 
+## What else
+- Cleaned duplicate theoretical-physics-workflow.Flow.json
+- Promoted theoretical-research.Flow.json to official tracked sample
+- README updated with theoretical-research as featured example
+
 ## Verification
 ```bash
 flow gen "read project structure then check if readme exists then create readme"
