@@ -82,10 +82,10 @@ def _detect_native_flow() -> bool:
     if os.environ.get("OPENCODE_NATIVE_FLOW") == "1":
         return True
     try:
-        from opencode import get_goal  # flow capability may coexist with goal
-        if hasattr(sys.modules.get("opencode", None), "run_flow"):
+        import opencode
+        if hasattr(opencode, "run_flow"):
             return True
-    except (ImportError, AttributeError):
+    except ImportError:
         pass
     return False
 

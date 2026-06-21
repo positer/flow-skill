@@ -72,16 +72,13 @@ SKILL.md                        # OpenCode skill definition
 | **Editor** | `FlowEditor.html` | Visual workflow editor (click-to-edit tree) |
 | **Skill** | `SKILL.md` | OpenCode skill definition |
 
-### Plugin Architecture
+### Goal Mode: Self-Contained Bounce-Back
 
-Both plugins auto-activate when the host agent lacks native support:
+Goal mode is a built-in composite of **Build + Logic**: it first executes the goal prompt (like Build), then auto-injects a verification logic step. If the goal isn't achieved, the workflow loops back to re-execute — no external plugin needed.
 
-| Plugin | Activation Condition | Provides |
-|--------|---------------------|----------|
-| `OpenCode_goal_plugin` | No `get_goal`/`update_goal` tools | `GoalManager` |
-| `FlowDialogPlugin` | No `opencode.run_flow` tool | `FlowDialogBridge` |
+### Dialog Trigger (CLI Fallback)
 
-Goal-mode dialog components call `set_goal()` / `update_goal()` through the goal plugin at runtime.
+Following the same detect→fallback pattern as the goal plugin, dialog components use stdin `input()` with `---done---` terminator when no agent conversation injection is available. The `DialogTrigger` class encapsulates this mechanism:
 
 ## Workflow Components
 
@@ -131,9 +128,12 @@ python flow.py run <name> --true   # Smoke test
 
 ## Agent Integration
 
+FlowDialogPlugin auto-detects native flow support and falls back gracefully:
+
 ```python
 from FlowDialogPlugin import ensure_flow_capability
 
+# Flow dialog capability (workflow execution bridge)
 flow_tools = ensure_flow_capability()
 if flow_tools:
     bridge = flow_tools["create_bridge"]("deploy", user_input="v2")
@@ -145,6 +145,8 @@ if flow_tools:
         elif step["type"] == "logic":
             bridge.submit_condition(agent_eval(step["prompt"]))
 ```
+
+Goal mode yields two steps consecutively: first a dialog step, then an auto-injected verification logic step. The bridge handles both transparently — the caller just sees dialog → logic → next, with no external goal plugin needed.
 
 ## Requirements
 

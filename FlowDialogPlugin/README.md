@@ -81,8 +81,6 @@ Example agent loops are shown in the **Bridge API** section above.
 
 ## How It Works
 
-The core idea mirrors `OpenCode_goal_plugin`:
-
 1. **Detection**: Check if the agent already has native flow dialog tools
 2. **Fallback**: If absent, use `run_workflow_iter()` generator from `flow.py`
 3. **Bridge**: Convert the generator's yield/send protocol into a simple
@@ -90,3 +88,6 @@ The core idea mirrors `OpenCode_goal_plugin`:
 4. **Conversation mapping**: Dialog component prompts are yielded as step
    dicts for the agent framework to present as actual conversation turns,
    rather than being printed to stdout
+5. **Goal mode**: Self-contained as Build + Logic bounce-back — Goal dialog
+   yields a verification logic step after response; if condition is FALSE,
+   the workflow loops back until the goal is achieved

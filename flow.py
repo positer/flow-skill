@@ -284,6 +284,64 @@ def auto_trigger(text: str, flow_dir: str) -> list[tuple[str, float]]:
     return results
 
 
+# ─── Dialog Trigger (following goal-plugin CLI pattern) ─────────────────────
+
+class DialogTrigger:
+    """Response-gathering mechanism for dialog components.
+    
+    Follows the same detect→fallback pattern as OpenCode_goal_plugin:
+    - In generator (agent) mode: yields prompt, expects response via .send()
+    - In CLI (fallback) mode: prints prompt, reads stdin with ---done--- terminator
+    
+    Usage:
+        trigger = DialogTrigger()
+        response = trigger.get("Execute the task: ...")
+    """
+
+    def __init__(self, generator=None):
+        self._generator = generator
+        self._current_step = None
+
+    def get(self, prompt: str, mode: str = "Build") -> str:
+        """Get a dialog response. Returns free-text string."""
+        if self._generator is not None:
+            import warnings
+            warnings.warn("Direct DialogTrigger.get() in generator mode — use yield protocol instead.")
+            return ""
+        print(f"\n{'='*60}")
+        print(f"[Dialog] Mode: {mode}")
+        print(f"{'='*60}")
+        print(prompt)
+        print(f"{'─'*60}")
+        print("[Flow] Enter response (end with '---done---' on its own line):")
+        resp_lines = []
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if line.strip() == "---done---":
+                break
+            resp_lines.append(line)
+        response = "\n".join(resp_lines).strip()
+        print(f"{'='*60}")
+        print(f"[Response] {response[:120]}{'...' if len(response) > 120 else ''}")
+        return response
+
+    def verify_goal(self, goal_prompt: str, completed_work: str, llm_eval=None) -> bool:
+        """Goal achievement check — the bounce-back verification."""
+        check = f"Is the following goal achieved?\nGoal: {goal_prompt[:200]}\nCompleted: {completed_work[:200]}"
+        print(f"\n>>> Goal verification: {check} >>>")
+        if llm_eval:
+            return llm_eval(check)
+        while True:
+            ans = input("  Goal achieved? (Y/N): ").strip().upper()
+            if ans in ("Y", "YES"):
+                return True
+            elif ans in ("N", "NO"):
+                return False
+
+
 # ─── Plan Mode Prompt Wrapping ────────────────────────────────────────────────
 
 def _build_dialog_prompt(component: FlowDialogComponent, user_input: str | None) -> str:
@@ -344,6 +402,7 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
     MAX_VISITS = 10
 
     auto_mode = llm_eval is not None
+    _trigger = DialogTrigger()
 
     while 0 <= idx < len(components):
         c = components[idx]
@@ -356,30 +415,27 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
 
         if isinstance(c, FlowDialogComponent):
             prompt = _build_dialog_prompt(c, user_input)
-            print(f"\n{'='*60}")
-            print(f"[Component {c.id}] Mode: {c.mode}")
-            print(f"{'='*60}")
-            print(prompt)
-            print(f"{'─'*60}")
             if auto_mode:
+                print(f"\n{'='*60}")
+                print(f"[Component {c.id}] Mode: {c.mode}")
+                print(f"{'='*60}")
+                print(prompt)
+                print(f"{'─'*60}")
                 print("[Flow] Auto mode: prompt printed — simulated run (no actual conversation injection)")
                 response = ""
             else:
-                print("[Flow] Enter response (end with '---done---' on its own line):")
-                resp_lines = []
-                while True:
-                    try:
-                        line = input()
-                    except EOFError:
-                        break
-                    if line.strip() == "---done---":
-                        break
-                    resp_lines.append(line)
-                response = "\n".join(resp_lines).strip()
-                print(f"{'='*60}")
-                print(f"[Response {c.id}] {response[:120]}{'...' if len(response) > 120 else ''}")
+                response = _trigger.get(prompt, c.mode)
             responses[cid] = response
-            idx += 1
+            if c.mode == "Goal":
+                achieved = _trigger.verify_goal(c.prompt, response, llm_eval)
+                if achieved:
+                    print(f"  -> Goal achieved, advancing.")
+                    idx += 1
+                else:
+                    print(f"  -> Goal NOT achieved, re-executing component {cid}.")
+                    continue
+            else:
+                idx += 1
 
         elif isinstance(c, FlowLogicComponent):
             prompt = c.prompt.replace("{#prompt#}", user_input or "")
@@ -420,10 +476,16 @@ def run_workflow_iter(name: str, flow_dir: str, user_input: str | None = None):
     Allows an agent loop to drive flow execution by yielding each component
     as a step dict and receiving responses via ``.send()``.
 
-    Yields (dialog component):
+    Yields (dialog component — Plan/Build mode):
         ``{"type": "dialog", "id": int, "mode": str, "prompt": str}``
     Expects via ``.send()``:
         ``{"type": "dialog_response", "response": str}``
+
+    Yields (dialog component — Goal mode): TWO consecutive steps
+        1. ``{"type": "dialog", "id": int, "mode": "Goal", "prompt": str}``
+           → send ``dialog_response``
+        2. ``{"type": "logic", "id": ..., "prompt": "<achievement check>"}``
+           → send ``logic_response`` with condition=True (achieved) or False (loop back)
 
     Yields (logic component):
         ``{"type": "logic", "id": int, "prompt": str, "goto_true": int, "goto_false": int}``
@@ -480,7 +542,16 @@ def run_workflow_iter(name: str, flow_dir: str, user_input: str | None = None):
             response = yield step
             if response is None:
                 response = {"type": "dialog_response", "response": ""}
-            idx += 1
+            if c.mode == "Goal":
+                resp_text = response.get("response", "") if isinstance(response, dict) else ""
+                check_prompt = f"Is component {cid}'s goal achieved?\nGoal: {c.prompt[:200]}\nCompleted: {resp_text[:200]}"
+                step_verify = {"type": "logic", "id": cid + 10000, "prompt": check_prompt, "goto_true": cid + 1, "goto_false": cid}
+                result = yield step_verify
+                condition = result.get("condition", False) if isinstance(result, dict) else False
+                if condition:
+                    idx += 1
+            else:
+                idx += 1
 
         elif isinstance(c, FlowLogicComponent):
             prompt = c.prompt.replace("{#prompt#}", user_input or "")

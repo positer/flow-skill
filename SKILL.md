@@ -73,13 +73,12 @@ flow auto "请帮我整理工作区"
 
 The `auto` subcommand returns ranked candidates. Score >= 0.5 is recommended for execution.
 
-## OpenCode-goal-plugin (`OpenCode_goal_plugin/`)
+## Goal Mode: Self-Contained Bounce-Back
 
-Built-in plugin providing `get_goal`/`update_goal` capability for agents that lack native goal support.
-
-**Activation**: Auto-detects native goal capability. Only activates when absent.
-**Persistence**: Stores goals in `.opencode/goals/state.json`.
-**Integration**: Flow's Goal mode dialog components use this plugin to set/complete goals.
+Goal mode dialog components now execute as **Build + Logic** composite:
+1. Prompt runs like a Build step
+2. After response, an auto-injected logic step verifies achievement
+3. Not achieved → loops back to the Goal dialog (no external plugin needed)
 
 ## Format Specification
 
