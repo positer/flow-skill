@@ -57,7 +57,6 @@ Flow/
 flow.py                         # CLI engine + workflow runner
 FlowEditor.html                 # Visual tree editor (standalone HTML)
 FlowDialogPlugin/               # Dialog bridge for agents without native flow
-OpenCode_goal_plugin/           # Goal fallback for agents without native goal
 SKILL.md                        # OpenCode skill definition
 ```
 
@@ -68,7 +67,6 @@ SKILL.md                        # OpenCode skill definition
 | **Format** | `*.Flow.json` | JSON-based workflow definition |
 | **Engine** | `flow.py` | CLI, validation, execution, auto-trigger |
 | **Dialog** | `FlowDialogPlugin` | Step-based bridge — wraps generator into start/step/response API |
-| **Goal** | `OpenCode_goal_plugin` | JSON-backed goal tracking for Goal-mode components |
 | **Editor** | `FlowEditor.html` | Visual workflow editor (click-to-edit tree) |
 | **Skill** | `SKILL.md` | OpenCode skill definition |
 
@@ -158,4 +156,3 @@ Goal mode yields two steps consecutively: first a dialog step, then an auto-inje
 
 - `Flow/Flow.md` — Full format specification
 - `FlowDialogPlugin/README.md` — Bridge API documentation
-- `OpenCode_goal_plugin/README.md` — Goal plugin documentation

@@ -162,11 +162,6 @@ Flow/
 ├── my_workflow.Flow.json    # Saved workflows
 └── ...
 
-OpenCode_goal_plugin/        # Built-in goal capability
-├── __init__.py
-├── goal_plugin.py
-└── README.md
-
 FlowDialogPlugin/            # Built-in flow dialog bridge
 ├── __init__.py
 ├── dialog_plugin.py
