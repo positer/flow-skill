@@ -1,0 +1,5 @@
+# Flow Workflow Tool
+# No external dependencies — uses only stdlib.
+# For LLM-integrated runs, install openai or anthropic:
+#   pip install openai
+#   pip install anthropic

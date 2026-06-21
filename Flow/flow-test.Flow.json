@@ -1,0 +1,50 @@
+{
+  "name": "flow-test",
+  "components": [
+    {
+      "type": "dialog",
+      "id": 0,
+      "mode": "Plan",
+      "prompt": "Read the flow-test workflow definition in Flow/flow-test.Flow.json. Identify all 7 components and their connections. Plan the execution path for: {#prompt#}. Produce a step-by-step trace showing which component IDs will execute and in what order."
+    },
+    {
+      "type": "logic",
+      "id": 1,
+      "prompt": "Is the Plan mode dialog component (ID 0) correctly executed and understood?",
+      "goto_true": 2,
+      "goto_false": 0
+    },
+    {
+      "type": "dialog",
+      "id": 2,
+      "mode": "Build",
+      "prompt": "Build: Create a markdown report documenting the flow-test execution. Include: (1) workflow component list, (2) execution trace for --true mode, (3) execution trace for --false mode showing cycle detection. Context: {#prompt#}"
+    },
+    {
+      "type": "logic",
+      "id": 3,
+      "prompt": "Is the Build mode dialog (ID 2) executed and is the report being generated?",
+      "goto_true": 4,
+      "goto_false": 2
+    },
+    {
+      "type": "dialog",
+      "id": 4,
+      "mode": "Goal",
+      "prompt": "Goal: Verify that all 7 components have been visited. Confirm: dialog Plan (ID 0), logic TRUE->2 (ID 1), dialog Build (ID 2), logic TRUE->4 (ID 3), dialog Goal (ID 4), logic TRUE->6 (ID 5), dialog Goal finish (ID 6). Input: {#prompt#}. Mark goal complete when all confirmed."
+    },
+    {
+      "type": "logic",
+      "id": 5,
+      "prompt": "Has component ID 4 (Goal mode) completed its verification?",
+      "goto_true": 6,
+      "goto_false": 4
+    },
+    {
+      "type": "dialog",
+      "id": 6,
+      "mode": "Goal",
+      "prompt": "Goal: flow-test workflow complete. All 3 dialog modes (Plan, Build, Goal) exercised. All 4 logic branches tested. {#prompt#} verified. Generate the final execution summary."
+    }
+  ]
+}

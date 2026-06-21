@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# OpenCode runtime
+.opencode/
+
+# OS
+*.tmp
+*.swp
+Thumbs.db
+.DS_Store
+
+# Backup
+dirt/
+dirt.zip
+
+# IDE
+.vscode/
+.idea/

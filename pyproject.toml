@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flow-workflow"
+version = "1.0.0"
+description = "Flow Workflow CLI — load, validate, list, edit, and run .Flow.json workflows"
+requires-python = ">=3.10"
+
+[project.scripts]
+flow = "flow:main"
