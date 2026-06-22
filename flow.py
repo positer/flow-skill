@@ -399,7 +399,7 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
     idx = 0
     responses: dict[int, str] = {}
     visit_counts: dict[int, int] = {}
-    MAX_VISITS = 10
+    MAX_VISITS = 300
 
     auto_mode = llm_eval is not None
     _trigger = DialogTrigger()
@@ -525,7 +525,7 @@ def run_workflow_iter(name: str, flow_dir: str, user_input: str | None = None):
     components = sorted(wf.components, key=lambda c: c.id)
     idx = 0
     visit_counts: dict[int, int] = {}
-    MAX_VISITS = 10
+    MAX_VISITS = 300
 
     while 0 <= idx < len(components):
         c = components[idx]
