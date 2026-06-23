@@ -3,135 +3,115 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A lightweight multi-agent workflow system. Create, validate, and execute sequential workflows using **dialog** (Plan/Build/Goal) and **logic** (conditional branching) components — all stored as plain `*.Flow.json` files.
+A lightweight multi-agent workflow engine with pluggable step handlers. Define sequential workflows as `*.Flow.json` files — **dialog** (Plan/Build/Goal) and **logic** (conditional branching) components with cycle-safe execution.
 
-## Why Flow?
+## Architecture
 
-| Problem | Flow Solution |
-|---------|---------------|
-| Agents get lost in complex tasks | Break down into sequential steps with explicit goto branching |
-| No easy way to reuse workflows | `*.Flow.json` files — version-controlled, shareable, reviewable |
-| Agent lacks native workflow support | `FlowDialogPlugin` auto-injects step-by-step execution bridge |
-| Conditional logic mid-task | `logic` components evaluate state → jump to next appropriate step |
-| Cycle hazards | Static pre-flight analysis + runtime guard (10 visits max) |
+```
+Flow Engine (flow.py)
+  ├── CLIStepHandler      — stdin/stdout (terminal)
+  ├── GeneratorStepHandler — yield/send (agent frameworks)
+  └── MCPToolHandler      — JSON-RPC tools (OpenCode/Codex/Harness)
+```
+
+| Layer | Component | Role |
+|-------|-----------|------|
+| **Format** | `*.Flow.json` | Version-controlled workflow definitions |
+| **Engine** | `flow.py` | CLI, validation, execution (1548 lines) |
+| **Handlers** | `StepHandler` ABC | Pluggable dialog/logic I/O: CLI, Generator, MCP |
+| **Bridge** | `FlowDialogPlugin` | Auto-injects step-by-step execution for agents |
+| **Editor** | `FlowEditor.html` | Visual tree editor (standalone HTML) |
+| **Gen** | `flow gen` | Harness-inspired pipeline generation from natural language |
+
+### StepHandler — Universal Agent Interface
+
+All agent calling patterns map to the same `StepHandler` interface:
+
+```python
+class StepHandler(ABC):
+    def on_dialog(self, step_id, mode, prompt) -> str   # returns response
+    def on_logic(self, step_id, prompt) -> bool           # returns T/F
+    def on_goal_verify(self, goal, work) -> bool          # bounce-back check
+```
+
+- **CLIStepHandler** — stdin `input()` with `---done---` terminator, T/F prompts
+- **GeneratorStepHandler** — yield/send protocol for agent frameworks
+- **MCPToolHandler** — tool call buffer for OpenCode, Claude Code, Codex, Harness
+
+### Goal Mode: Self-Contained Bounce-Back
+
+Goal components execute as **Build + Logic composite**: prompt runs, then auto-injects a verification logic step. Not achieved → loops back. No external plugin dependency.
+
+## Pipeline Generation (`flow gen`)
+
+Modeled after Harness CI/CD pipelines. Auto-detects type, groups steps into stages, injects failure recovery and approval gates.
+
+```bash
+flow gen "build then test then deploy"
+flow gen "implement feature then verify tests pass then create pr"
+flow gen "derive theorem then prove lemmas then write paper"
+```
+
+**Pipeline types:** CI, CD, FEATURE, RESEARCH, REVIEW  
+**Generated structure:** Stage labels → dialog actions → logic conditions → failure recovery checks → inter-stage approval gates → Goal completion
 
 ## Quick Start
 
 ```bash
-python flow.py              # Dashboard — init, check all
-python flow.py list         # List all workflows
-python flow.py run <name>   # Execute workflow (fuzzy name match)
-python flow.py serve        # Launch HTML tree editor
+python flow.py                    # Dashboard
+python flow.py list               # List workflows
+python flow.py run <name>         # Execute (fuzzy name match)
+python flow.py gen "build test deploy"  # Generate pipeline
+python flow.py serve              # HTML tree editor
 ```
 
-## Featured Example: Theoretical Research Pipeline
+## Featured: Theoretical Research Pipeline
 
-`theoretical-research` is a 42-component (30 dialog + 12 logic) workflow that automates a complete theoretical physics/mathematics research pipeline — from literature audit to final paper assembly.
+42-component workflow automating full research pipeline — literature audit to final LaTeX. 5 phases, 4-way subagent peer review, SymPy-gated computation steps.
 
 ```bash
 python flow.py run theoretical-research -i "Ads^n x S^m three-string vertex unified theory"
-```
-
-**Pipeline phases:**
-
-| Phase | Components | Description |
-|-------|-----------|-------------|
-| 0–2 | Plan + Logic + Build | Workspace audit, literature survey, math framework setup |
-| 3–6 | Build × 4 + Logic | Core computation steps with SymPy verification |
-| 7–8 | Plan + Build × 2 + Logic | Lie subgroup & manifold topology classification |
-| 9–10 | Build × 2 + Logic | Unified theorem → specialization & limit verification |
-| 11–15 | Build × 9 + Logic × 3 | 4-way subagent review → revision → 2 clean confirmation rounds → final LaTeX |
-
-All prompts use `{#prompt#}` placeholders for injection of specific research problems at runtime. The workflow enforces mathematical rigor via SymPy symbolic verification at each computation step, and quality via independent multi-agent peer review with iteration gates.
-
-## Project Structure
-
-```
-Flow/
-├── Flow.md                           # Format specification
-├── add_list_sum.Flow.json            # Sample: 8-component workflow
-├── feature-dev.Flow.json             # Sample: 5-component feature dev
-├── flow-test.Flow.json               # 7-component test (all types + jumps)
-└── theoretical-research.Flow.json    # 42-component theoretical research pipeline
-
-flow.py                         # CLI engine + workflow runner
-FlowEditor.html                 # Visual tree editor (standalone HTML)
-FlowDialogPlugin/               # Dialog bridge for agents without native flow
-SKILL.md                        # OpenCode skill definition
-```
-
-## Architecture
-
-| Layer | Component | Responsibility |
-|-------|-----------|----------------|
-| **Format** | `*.Flow.json` | JSON-based workflow definition |
-| **Engine** | `flow.py` | CLI, validation, execution, auto-trigger |
-| **Dialog** | `FlowDialogPlugin` | Step-based bridge — wraps generator into start/step/response API |
-| **Editor** | `FlowEditor.html` | Visual workflow editor (click-to-edit tree) |
-| **Skill** | `SKILL.md` | OpenCode skill definition |
-
-### Goal Mode: Self-Contained Bounce-Back
-
-Goal mode is a built-in composite of **Build + Logic**: it first executes the goal prompt (like Build), then auto-injects a verification logic step. If the goal isn't achieved, the workflow loops back to re-execute — no external plugin needed.
-
-### Dialog Trigger (CLI Fallback)
-
-Following the same detect→fallback pattern as the goal plugin, dialog components use stdin `input()` with `---done---` terminator when no agent conversation injection is available. The `DialogTrigger` class encapsulates this mechanism:
-
-## Workflow Components
-
-### Dialog (`type: "dialog"`)
-
-Modes: **Plan** (create plan), **Build** (execute task), **Goal** (set objective).
-
-```json
-{"type": "dialog", "id": 0, "mode": "Plan", "prompt": "Plan: {#prompt#}"}
-```
-
-`{#prompt#}` is replaced with user input at runtime. Plan mode supports Chinese `设置计划` → `计划` stripping.
-
-### Logic (`type: "logic"`)
-
-Evaluate if a condition is already implemented → jump accordingly.
-
-```json
-{"type": "logic", "id": 1, "prompt": "Is README created?", "goto_true": 3, "goto_false": 2}
 ```
 
 ## CLI
 
 | Command | Description |
 |---------|-------------|
-| `flow` | Dashboard: init Flow/, check all |
+| `flow` | Dashboard: init, check all |
 | `flow list` | List workflows |
 | `flow show <name>` | Component details |
 | `flow validate <name>` | Validate single workflow |
-| `flow check` | Validate all workflows |
-| `flow new <name>` | Create blank workflow |
+| `flow check` | Validate all |
+| `flow new <name>` | Create blank |
 | `flow delete <name>` | Delete workflow |
-| `flow run <name> -i "..." [--true/--false]` | Execute workflow (fuzzy name match) |
-| `flow auto <text>` | Auto-trigger: scan text for workflow matches |
-| `flow gen <description>` | Generate workflow from natural language (use `{#prompt#}` for templates) |
-| `flow sum <name> --workspace .` | Generate workflow from workspace analysis |
-| `flow cycles <name> [--all]` | Analyze logic flow for cycles |
+| `flow run <name> -i "..." [--true/--false]` | Execute (fuzzy name) |
+| `flow auto <text>` | Auto-trigger: scan for matches |
+| `flow gen <description>` | Generate pipeline from natural language |
+| `flow sum <name> --workspace .` | Generate from workspace analysis |
+| `flow cycles <name> [--all]` | Analyze logic for cycles |
 | `flow serve -p 8765` | Launch HTML editor |
 
-## Verification
+## Project Structure
 
-```bash
-python flow.py check          # Validate all workflows
-python flow.py cycles --all   # Check for logic loops
-python flow.py run <name> --true   # Smoke test
+```
+Flow/                             # Workflow definitions
+├── Flow.md                       # Format specification
+├── add_list_sum.Flow.json        # Sample (8 comps)
+├── feature-dev.Flow.json         # Feature dev (5 comps)
+├── flow-test.Flow.json           # Test workflow (7 comps)
+└── theoretical-research.Flow.json # Research pipeline (42 comps)
+
+flow.py                           # CLI + engine (1548 lines)
+FlowEditor.html                   # Tree editor
+FlowDialogPlugin/                 # Dialog bridge for agents
+SKILL.md                          # OpenCode skill
 ```
 
 ## Agent Integration
 
-FlowDialogPlugin auto-detects native flow support and falls back gracefully:
-
 ```python
 from FlowDialogPlugin import ensure_flow_capability
 
-# Flow dialog capability (workflow execution bridge)
 flow_tools = ensure_flow_capability()
 if flow_tools:
     bridge = flow_tools["create_bridge"]("deploy", user_input="v2")
@@ -144,15 +124,14 @@ if flow_tools:
             bridge.submit_condition(agent_eval(step["prompt"]))
 ```
 
-Goal mode yields two steps consecutively: first a dialog step, then an auto-injected verification logic step. The bridge handles both transparently — the caller just sees dialog → logic → next, with no external goal plugin needed.
+Goal mode yields two steps (dialog + verification logic) transparently through the bridge.
 
 ## Requirements
 
 - Python 3.10+
-- No external dependencies required
-- `rich` (optional, for enhanced CLI output)
+- No external dependencies
 
 ## See Also
 
-- `Flow/Flow.md` — Full format specification
-- `FlowDialogPlugin/README.md` — Bridge API documentation
+- `Flow/Flow.md` — Format specification + gen guide
+- `FlowDialogPlugin/README.md` — Bridge API
