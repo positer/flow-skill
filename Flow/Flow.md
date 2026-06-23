@@ -120,7 +120,53 @@ def my_llm_eval(prompt: str) -> bool:
 run_workflow("deploy", "Flow/", user_input="deploy v2", llm_eval=my_llm_eval)
 ```
 
-## CLI Commands
+## Pipeline Generation (`flow gen`)
+
+Generates a structured workflow from natural language, modeled after Harness CI/CD pipeline principles:
+
+**Pipeline → Stages → Steps** with conditional execution, failure recovery, and approval gates.
+
+### Pipeline Type Detection
+
+| Description Keywords | Detected Type |
+|---------------------|---------------|
+| build, test, ci, compile, lint, artifact | `CI` |
+| deploy, release, rollout, canary, staging | `CD` |
+| feature, implement, story, ticket, pr | `FEATURE` |
+| research, derive, prove, theorem, paper | `RESEARCH` |
+| review, audit, inspect, approve | `REVIEW` |
+
+### Generated Structure
+
+Each `flow gen` output includes:
+
+1. **Stage labels** — Steps grouped into stages (e.g., "Plan & Setup", "Build & Compile", "Verify & Approve")
+2. **Dialog actions** — Each action step gets an enriched prompt with stage context
+3. **Logic conditions** — Auto-detected from keywords (check, verify, only if, when fails, etc.)
+4. **Failure recovery** — After each Build action, a logic check verifies success and loops back on failure
+5. **Approval gates** — Manual approval logic between stages (self-loop until approved)
+6. **Goal completion** — Terminal Goal component verifies pipeline completion
+
+### Examples
+
+```bash
+# CI pipeline with stages
+flow gen "build then test then deploy"
+
+# Feature workflow with verification
+flow gen "implement feature then verify tests pass then create pr"
+
+# Template workflow (uses {#prompt#} at runtime)
+flow gen "implement {#prompt#} then verify it works"
+
+# Research pipeline
+flow gen "derive theorem then prove lemmas then write paper" --name research-paper
+
+# Force overwrite existing
+flow gen "clone build test publish" --name ci-pipeline --force
+```
+
+### CLI Commands
 
 | Command | Description |
 |---------|-------------|

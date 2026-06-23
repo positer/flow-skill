@@ -286,33 +286,105 @@ def auto_trigger(text: str, flow_dir: str) -> list[tuple[str, float]]:
 
 # ─── Dialog Trigger (following goal-plugin CLI pattern) ─────────────────────
 
-class DialogTrigger:
-    """Response-gathering mechanism for dialog components.
+import abc
+
+
+class StepHandler(abc.ABC):
+    """Pluggable handler for workflow dialog/logic steps.
     
-    Follows the same detect→fallback pattern as OpenCode_goal_plugin:
-    - In generator (agent) mode: yields prompt, expects response via .send()
-    - In CLI (fallback) mode: prints prompt, reads stdin with ---done--- terminator
+    Universal interface supporting all agent calling patterns:
+      - Generator (yield/send for agent frameworks)
+      - CLI (stdin/stdout for terminal)
+      - MCP (JSON-RPC tools for OpenCode/Codex/Harness)
     
-    Usage:
-        trigger = DialogTrigger()
-        response = trigger.get("Execute the task: ...")
+    Usage in run_workflow():
+        handler = CLIStepHandler()
+        run_workflow("deploy", "Flow/", handler=handler)
     """
 
-    def __init__(self, generator=None):
-        self._generator = generator
-        self._current_step = None
+    @abc.abstractmethod
+    def on_dialog(self, step_id: int, mode: str, prompt: str) -> str:
+        """Handle a dialog step. Returns free-text response string."""
+        ...
 
-    def get(self, prompt: str, mode: str = "Build") -> str:
-        """Get a dialog response. Returns free-text string."""
-        if self._generator is not None:
-            import warnings
-            warnings.warn("Direct DialogTrigger.get() in generator mode — use yield protocol instead.")
-            return ""
+    @abc.abstractmethod
+    def on_logic(self, step_id: int, prompt: str) -> bool:
+        """Handle a logic condition. Returns True (condition met) or False."""
+        ...
+
+    def on_goal_verify(self, goal_prompt: str, work_done: str) -> bool:
+        """Verify whether a goal was achieved. Default reuses on_logic."""
+        check = f"Is the following goal achieved?\nGoal: {goal_prompt[:200]}\nCompleted: {work_done[:200]}"
+        return self.on_logic(-1, check)
+
+    def on_complete(self, message: str = "Workflow complete."):
+        """Called when workflow finishes successfully."""
+        pass
+
+    def on_error(self, step_id: int, message: str):
+        """Called when a workflow error occurs."""
+        pass
+
+
+class GeneratorStepHandler(StepHandler):
+    """Step handler using yield/send generator protocol.
+    
+    For agent frameworks that can drive execution via generator iteration.
+    Yields step dicts, receives responses via .send().
+    
+    Usage:
+        handler = GeneratorStepHandler()
+        gen = handler.run(workflow_name, flow_dir, user_input)
+        for step in gen:
+            if step["type"] == "dialog":
+                gen.send(handler.on_dialog(...))
+    """
+
+    def __init__(self):
+        self._generator = None
+        self._current_step = None
+        self._responses: list[tuple[str, str]] = []
+
+    def on_dialog(self, step_id: int, mode: str, prompt: str) -> str:
+        print(f"\n[Generator {step_id}] Mode: {mode}")
+        print(f"  Prompt: {prompt[:80]}...")
+        resp = input(f"  Response ({step_id}): ")
+        return resp
+
+    def on_logic(self, step_id: int, prompt: str) -> bool:
+        while True:
+            ans = input(f"  Logic [{step_id}]: {prompt[:60]}... (T/F): ").strip().upper()
+            if ans in ("T", "TRUE"):
+                return True
+            elif ans in ("F", "FALSE"):
+                return False
+
+    def run(self, name: str, flow_dir: str, user_input: str | None = None):
+        """Run the workflow and yield steps for agent consumption."""
+        from flow import run_workflow_iter
+        return run_workflow_iter(name, flow_dir, user_input)
+
+
+class CLIStepHandler(StepHandler):
+    """Step handler using stdin/stdout (terminal).
+    
+    The default handler for CLI usage. Prints prompts and reads responses
+    via input() with ---done--- terminator for multi-line input.
+    Follows the same pattern as OpenCode_goal_plugin's CLI interface.
+    """
+
+    def __init__(self, llm_eval=None):
+        self._llm_eval = llm_eval
+
+    def on_dialog(self, step_id: int, mode: str, prompt: str) -> str:
         print(f"\n{'='*60}")
-        print(f"[Dialog] Mode: {mode}")
+        print(f"[Component {step_id}] Mode: {mode}")
         print(f"{'='*60}")
         print(prompt)
         print(f"{'─'*60}")
+        if self._llm_eval:
+            print("[Flow] Auto mode: prompt printed — simulated run")
+            return ""
         print("[Flow] Enter response (end with '---done---' on its own line):")
         resp_lines = []
         while True:
@@ -325,21 +397,89 @@ class DialogTrigger:
             resp_lines.append(line)
         response = "\n".join(resp_lines).strip()
         print(f"{'='*60}")
-        print(f"[Response] {response[:120]}{'...' if len(response) > 120 else ''}")
+        print(f"[Response {step_id}] {response[:120]}{'...' if len(response) > 120 else ''}")
         return response
 
-    def verify_goal(self, goal_prompt: str, completed_work: str, llm_eval=None) -> bool:
-        """Goal achievement check — the bounce-back verification."""
-        check = f"Is the following goal achieved?\nGoal: {goal_prompt[:200]}\nCompleted: {completed_work[:200]}"
+    def on_logic(self, step_id: int, prompt: str) -> bool:
+        print(f"\n>>> Logic [{step_id}] Evaluating: {prompt} >>>")
+        if self._llm_eval:
+            eval_prompt = f"In the current workspace, is the following condition already implemented?\nCondition: {prompt}\nAnswer only TRUE or FALSE."
+            return self._llm_eval(eval_prompt)
+        while True:
+            ans = input("  Condition TRUE or FALSE? (T/F): ").strip().upper()
+            if ans in ("T", "TRUE"):
+                return True
+            elif ans in ("F", "FALSE"):
+                return False
+
+    def on_goal_verify(self, goal_prompt: str, work_done: str) -> bool:
+        check = f"Is the following goal achieved?\nGoal: {goal_prompt[:200]}\nCompleted: {work_done[:200]}"
         print(f"\n>>> Goal verification: {check} >>>")
-        if llm_eval:
-            return llm_eval(check)
+        if self._llm_eval:
+            return self._llm_eval(check)
         while True:
             ans = input("  Goal achieved? (Y/N): ").strip().upper()
             if ans in ("Y", "YES"):
                 return True
             elif ans in ("N", "NO"):
                 return False
+
+
+class MCPToolHandler(StepHandler):
+    """Step handler via MCP (Model Context Protocol) tools.
+    
+    For OpenCode, Claude Code, Codex, and other MCP-compatible agents.
+    Exposes workflow steps as MCP tool calls: the agent triggers a tool,
+    the handler returns the result, and the engine advances.
+    """
+
+    def __init__(self, tool_callback=None):
+        self._callback = tool_callback
+        self._dialog_buffer: list[dict] = []
+
+    def on_dialog(self, step_id: int, mode: str, prompt: str) -> str:
+        if self._callback:
+            return self._callback("dialog", {"id": step_id, "mode": mode, "prompt": prompt})
+        self._dialog_buffer.append({"id": step_id, "mode": mode, "prompt": prompt})
+        return ""
+
+    def on_logic(self, step_id: int, prompt: str) -> bool:
+        if self._callback:
+            result = self._callback("logic", {"id": step_id, "prompt": prompt})
+            return bool(result)
+        return True
+
+    def get_pending_dialogs(self) -> list[dict]:
+        """Return buffered dialog prompts for agent to process."""
+        pending = list(self._dialog_buffer)
+        self._dialog_buffer.clear()
+        return pending
+
+
+class DialogTrigger:
+    """[DEPRECATED] Use CLIStepHandler directly.
+    
+    Response-gathering mechanism for dialog components.
+    Follows the same detect→fallback pattern as OpenCode_goal_plugin.
+    """
+
+    def __init__(self, generator=None):
+        self._generator = generator
+        self._handler = CLIStepHandler()
+
+    def get(self, prompt: str, mode: str = "Build") -> str:
+        if self._generator is not None:
+            import warnings
+            warnings.warn("Direct DialogTrigger.get() in generator mode — use yield protocol instead.")
+            return ""
+        return self._handler.on_dialog(0, mode, prompt)
+
+    def verify_goal(self, goal_prompt: str, completed_work: str, llm_eval=None) -> bool:
+        h = CLIStepHandler(llm_eval)
+        return h.on_goal_verify(goal_prompt, completed_work)
+
+
+# ─── Plan Mode Prompt Wrapping ────────────────────────────────────────────────
 
 
 # ─── Plan Mode Prompt Wrapping ────────────────────────────────────────────────
@@ -373,13 +513,25 @@ def _build_dialog_prompt(component: FlowDialogComponent, user_input: str | None)
     return raw.replace("{#prompt#}", ui)
 
 
-def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_eval=None) -> None:
-    """Execute a workflow. `llm_eval(prompt: str) -> bool` is called for logic
-    components. If None, logic components prompt stdin for TRUE/FALSE input."""
+def run_workflow(name: str, flow_dir: str, user_input: str | None = None,
+                 llm_eval=None, handler: StepHandler | None = None) -> None:
+    """Execute a workflow.
+    
+    Args:
+        name: Workflow name (fuzzy-matched)
+        flow_dir: Flow/ directory path
+        user_input: Text for {#prompt#} substitution
+        llm_eval: Callable for auto-evaluating logic conditions (deprecated, use handler instead)
+        handler: A StepHandler instance (CLIStepHandler, MCPToolHandler, etc.)
+                 Defaults to CLIStepHandler with optional llm_eval.
+    """
     wf = load_workflow(name, flow_dir)
     if wf is None:
         print(f"[Flow] Workflow '{name}' not found.", file=sys.stderr)
         sys.exit(1)
+
+    if handler is None:
+        handler = CLIStepHandler(llm_eval)
 
     # Pre-flight: warn about potential cycles before first execution
     cycle_warnings = warn_cycles(wf)
@@ -401,9 +553,6 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
     visit_counts: dict[int, int] = {}
     MAX_VISITS = 300
 
-    auto_mode = llm_eval is not None
-    _trigger = DialogTrigger()
-
     while 0 <= idx < len(components):
         c = components[idx]
         cid = c.id
@@ -411,23 +560,15 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
         visit_counts[cid] = visit_counts.get(cid, 0) + 1
         if visit_counts[cid] > MAX_VISITS:
             print(f"\n[Flow] Cycle detected: component {c.id} visited {visit_counts[cid]} times, stopping.")
+            handler.on_error(cid, f"Cycle detected at component {cid}")
             break
 
         if isinstance(c, FlowDialogComponent):
             prompt = _build_dialog_prompt(c, user_input)
-            if auto_mode:
-                print(f"\n{'='*60}")
-                print(f"[Component {c.id}] Mode: {c.mode}")
-                print(f"{'='*60}")
-                print(prompt)
-                print(f"{'─'*60}")
-                print("[Flow] Auto mode: prompt printed — simulated run (no actual conversation injection)")
-                response = ""
-            else:
-                response = _trigger.get(prompt, c.mode)
+            response = handler.on_dialog(cid, c.mode, prompt)
             responses[cid] = response
             if c.mode == "Goal":
-                achieved = _trigger.verify_goal(c.prompt, response, llm_eval)
+                achieved = handler.on_goal_verify(c.prompt, response)
                 if achieved:
                     print(f"  -> Goal achieved, advancing.")
                     idx += 1
@@ -439,20 +580,7 @@ def run_workflow(name: str, flow_dir: str, user_input: str | None = None, llm_ev
 
         elif isinstance(c, FlowLogicComponent):
             prompt = c.prompt.replace("{#prompt#}", user_input or "")
-            eval_prompt = f"In the current workspace, is the following condition already implemented?\nCondition: {prompt}\nAnswer only TRUE or FALSE."
-            print(f"\n>>> Logic [{c.id}] Evaluating: {prompt} >>>")
-            if llm_eval:
-                result = llm_eval(eval_prompt)
-            else:
-                while True:
-                    ans = input("  Condition TRUE or FALSE? (T/F): ").strip().upper()
-                    if ans in ("T", "TRUE"):
-                        result = True
-                        break
-                    elif ans in ("F", "FALSE"):
-                        result = False
-                        break
-
+            result = handler.on_logic(cid, prompt)
             if result:
                 print(f"  -> TRUE, goto component {c.goto_true}")
                 new_idx = next((i for i, x in enumerate(components) if x.id == c.goto_true), -1)
@@ -573,13 +701,92 @@ def run_workflow_iter(name: str, flow_dir: str, user_input: str | None = None):
 
 
 # ─── Gen (prompt → workflow generation) ─────────────────────────────────────
+# Built on Harness CI/CD pipeline principles:
+#   Pipeline → Stages (Plan/Build/Deploy/Verify) → Steps (dialog/logic)
+#   + Conditional execution, failure strategies, approval gates
+
+_PIPELINE_PATTERNS = {
+    "ci":     {"keywords": ["build", "test", "ci", "compile", "lint", "unit test", "integration test", "artifact"]},
+    "cd":     {"keywords": ["deploy", "release", "rollout", "canary", "blue-green", "production", "staging"]},
+    "feature": {"keywords": ["feature", "implement", "story", "ticket", "pr", "pull request", "branch"]},
+    "research": {"keywords": ["research", "derive", "prove", "theorem", "literature", "paper", "theory"]},
+    "review":  {"keywords": ["review", "audit", "inspect", "approve", "sign-off"]},
+}
+
+
+def _gen_detect_pipeline_type(text: str) -> str:
+    """Detect the pipeline type from description keywords."""
+    tl = text.lower()
+    scores = {}
+    for ptype, cfg in _PIPELINE_PATTERNS.items():
+        scores[ptype] = sum(1 for kw in cfg["keywords"] if kw in tl)
+    if max(scores.values()) == 0:
+        return "general"
+    return max(scores, key=scores.get)
+
+
+def _gen_pipeline_header(ptype: str) -> str:
+    """Return a stage label and prompt header for the pipeline type."""
+    headers = {
+        "ci":       ("CI Pipeline", "CI pipeline: clone, build, test, and publish artifacts."),
+        "cd":       ("CD Pipeline", "CD pipeline: deploy through environments with approval gates."),
+        "feature":  ("Feature Pipeline", "Feature branch: plan, implement, test, and submit."),
+        "research": ("Research Pipeline", "Research workflow: literature, derive, verify, and publish."),
+        "review":   ("Review Pipeline", "Review pipeline: inspect, approve, and merge."),
+    }
+    return headers.get(ptype, headers["feature"])
+
+
+def _gen_detect_stages(text: str, steps: list[tuple[str, bool]]) -> list[list[int]]:
+    """Group step indices into stages based on transitions and keywords.
+    
+    Each stage is a list of step indices. A new stage starts when:
+    - A step mentions a phase keyword ("deploy", "review", "publish", "verify")
+    - Consecutive logic/action pairs form a natural group
+    - More than 4 steps exist (split into stages of 2-4)
+    """
+    t = text.lower()
+    stage_breaks = []
+    
+    # Phase transition keywords signal new stages
+    phase_keywords = [
+        r'\bdeploy\b', r'\breview\b', r'\bpublish\b', r'\brelease\b',
+        r'\bverify\b', r'\bapprove\b', r'\bstage\b', r'\bphase\b',
+        r'\bround\b', r'\bfinalize\b',
+    ]
+    
+    for i, (step_text, _) in enumerate(steps):
+        st = step_text.lower()
+        for kw in phase_keywords:
+            import re
+            if re.search(kw, st):
+                if i > 0 and i not in stage_breaks:
+                    stage_breaks.append(i)
+                break
+    
+    if not stage_breaks and len(steps) > 4:
+        # Auto-split into stages of 2-4 steps
+        mid = len(steps) // 2
+        stage_breaks.append(mid)
+    
+    # Build stage groups
+    groups = []
+    start = 0
+    for brk in sorted(stage_breaks):
+        if brk > start:
+            groups.append(list(range(start, brk)))
+            start = brk
+    if start < len(steps):
+        groups.append(list(range(start, len(steps))))
+    
+    return groups if groups else [list(range(len(steps)))]
+
 
 def _gen_name_from_text(text: str) -> str:
     """Generate a kebab-case workflow name from the first meaningful words."""
     import re
     cleaned = re.sub(r'\{#prompt#\}', '', text).strip()
     cleaned = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff\s_-]', '', cleaned)
-    # Split on separators first, take first meaningful words
     sep_parts = re.split(r'[\s,;.]+', cleaned)
     stopwords = {"the", "a", "an", "to", "of", "in", "for", "and", "or", "is", "it",
                  "then", "after", "finally", "next", "with", "by", "at", "on"}
@@ -594,7 +801,6 @@ def _gen_name_from_text(text: str) -> str:
 def _gen_split_steps(text: str) -> list[str]:
     """Split a description into individual step descriptions."""
     import re
-    # Normalize separators
     separators = [
         r',\s*and\s+', r'\s+and\s+then\s+', r'\s+then\s+',
         r'\s+after\s+that\s*', r'\s+finally\s+', r'\s+next\s*,\s*',
@@ -610,17 +816,15 @@ def _gen_split_steps(text: str) -> list[str]:
 def _gen_is_condition(step: str) -> bool:
     """Detect if a step describes a logic condition (check/verify/confirm).
 
-    Heuristics (checked in order):
-      1. Step starts with an action verb → never a condition
-      2. Step ends with ? → condition
-      3. Step IS a short check phrase → condition
-      4. Step contains condition keywords → condition
-      5. Otherwise → dialog action
+    Harness-inspired patterns:
+      - Conditional execution: "only if", "when X fails", "skip when"
+      - Approval gates: "needs approval", "requires sign-off"
+      - Failure strategies: "on failure", "rollback if", "if broken"
     """
     import re
     s = step.strip().lower()
 
-    # Action verbs first (override): step starts with an action command
+    # Action verbs override everything
     action_verbs = [
         r'^implement', r'^create\b', r'^write\b', r'^build\b', r'^add\b',
         r'^read\b', r'^explore\b', r'^update\b', r'^refactor\b', r'^fix\b',
@@ -628,6 +832,7 @@ def _gen_is_condition(step: str) -> bool:
         r'^make\b', r'^generate\b', r'^delete\b', r'^remove\b', r'^rename\b',
         r'^move\b', r'^copy\b', r'^setup\b', r'^init\b', r'^prepare\b',
         r'^review\b', r'^analyze\b', r'^document\b', r'^research\b', r'^find\b',
+        r'^compile\b', r'^publish\b', r'^release\b', r'^rollout\b',
     ]
     for pat in action_verbs:
         if re.search(pat, s):
@@ -637,10 +842,20 @@ def _gen_is_condition(step: str) -> bool:
     if s.rstrip('?.!').endswith('?'):
         return True
 
-    # Short pure-check phrases (≤6 words, starts with check/verify)
+    # Short pure-check phrases
     short_check = r'^(check|verify|validate|confirm|ensure)\s'
     if re.search(short_check, s) and len(s.split()) <= 8:
         return True
+
+    # Conditional execution patterns (Harness-inspired)
+    conditional_patterns = [
+        r'\bonly\s+if\b', r'\bwhen\s+\w+\s+(fails|passes|succeeds|completes)\b',
+        r'\bskip\s+(when|if)\b', r'\bfail\s+if\b',
+        r'\brollback\s+(if|when)\b', r'\bif\s+\w+\s+(fails|breaks)\b',
+    ]
+    for pat in conditional_patterns:
+        if re.search(pat, s):
+            return True
 
     # Contains condition keywords
     logic_triggers = [
@@ -648,8 +863,10 @@ def _gen_is_condition(step: str) -> bool:
         r'\bensure\b', r'\bis\s+it\b', r'\bare\s+there\b', r'\bdoes\s+it\b',
         r'\bwhether\b', r'\bimplemented\?', r'\bready\?', r'\bcomplete\?',
         r'\bexists\?', r'\bpassing\?',
-        r'\bis\s+\w+\s+(ready|done|complete|implemented)',
-        r'\bare\s+\w+\s+(ready|done|complete|implemented)',
+        r'\bis\s+\w+\s+(ready|done|complete|implemented|deployed)',
+        r'\bare\s+\w+\s+(ready|done|complete|implemented|deployed)',
+        r'\bapprove\b', r'\bapproval\b', r'\bsign.?off\b',
+        r'\bgate\b', r'\bquality.?gate\b',
     ]
     for pat in logic_triggers:
         if re.search(pat, s):
@@ -658,30 +875,33 @@ def _gen_is_condition(step: str) -> bool:
     return False
 
 
-def _gen_assign_mode(index: int, total: int, step: str) -> str:
-    """Assign dialog mode based on position: first→Plan, last→Goal, middle→Build."""
-    if total == 1:
-        return "Build"
-    if index == 0:
-        return "Plan"
-    if index == total - 1:
-        return "Goal"
-    return "Build"
+def _gen_build_stage_header(stage_idx: int, ptype: str, step_count: int) -> str:
+    """Build a stage label prompt that sets context for the steps within."""
+    stage_names = {
+        "ci":       ["Plan & Setup", "Build & Compile", "Test & Verify", "Package & Publish"],
+        "cd":       ["Plan Release", "Deploy to Staging", "Verify & Approve", "Production Rollout"],
+        "feature":  ["Plan & Design", "Implementation", "Test & Review", "Merge & Close"],
+        "research": ["Foundations & Lit Review", "Core Derivation", "Verification & Classification", "Paper & Review"],
+    }
+    names = stage_names.get(ptype, ["Phase 1", "Phase 2", "Phase 3", "Phase 4"])
+    name = names[stage_idx] if stage_idx < len(names) else f"Phase {stage_idx + 1}"
+    return f"[Stage: {name}]"
 
 
 def cmd_gen(args):
     """Generate a workflow from a natural language description.
     
-    Supports both concrete workflows (specific instructions) and template
-    workflows (with {#prompt#} placeholders for generic use).
+    Built on Harness CI/CD pipeline principles:
+      - Pipeline → Stages → Steps with conditional execution
+      - Failure recovery logic between steps
+      - Approval gates between stages
+      - Stage context enriches individual step prompts
     
-    Strategy:
-      1. Split description into steps (by "then", ". ", etc.)
-      2. Classify each step as condition (check/verify) or action (do)
-      3. Build components by interleaving conditions with their actions.
-         Pattern: Action → [Condition → Action × N → Verify] → Goal
-         Each condition's goto_false jumps to its nearest preceding action,
-         goto_true skips ahead past the implementation to the next condition/action.
+    Examples:
+      flow gen "build then test then deploy"
+      flow gen "implement feature then verify tests pass then create pr"
+      flow gen "derive theorem then prove lemmas then write paper" --name research-paper
+      flow gen "clone build test publish" --name ci-pipeline --force
     """
     d = resolve_dir(args.dir)
     text = args.text
@@ -698,8 +918,11 @@ def cmd_gen(args):
         sys.exit(1)
 
     is_template = "{#prompt#}" in text
+    ptype = _gen_detect_pipeline_type(text)
+    stage_label, pipeline_desc = _gen_pipeline_header(ptype)
+    
     raw_steps = _gen_split_steps(text)
-
+    
     # Classify each step
     classified = []
     for s in raw_steps:
@@ -711,58 +934,114 @@ def cmd_gen(args):
         print("[Flow] Could not parse description into steps.", file=sys.stderr)
         sys.exit(1)
 
-    # Build component list
-    comps = []
+    # Group steps into stages
+    stage_groups = _gen_detect_stages(text, classified)
 
-    for idx, (step_text, is_cond) in enumerate(classified):
-        if is_cond:
+    comps = []
+    inserted_stage_labels = set()
+    last_action_cid = None  # track across stages for condition→action back-links
+
+    for stage_idx, step_indices in enumerate(stage_groups):
+        
+        for pos_in_stage, step_idx in enumerate(step_indices):
+            step_text, is_cond = classified[step_idx]
+            stage_header = _gen_build_stage_header(stage_idx, ptype, len(step_indices))
+            
+            # Insert a stage label dialog before the first step of each stage
+            if pos_in_stage == 0:
+                label_key = f"stage_{stage_idx}"
+                if label_key not in inserted_stage_labels:
+                    inserted_stage_labels.add(label_key)
+                    cid = len(comps)
+                    comps.append({
+                        "type": "dialog",
+                        "id": cid,
+                        "mode": "Plan" if stage_idx == 0 else "Plan",
+                        "prompt": f"{stage_header} {pipeline_desc} Context: prepare for the steps in this stage."
+                    })
+                else:
+                    cid = len(comps)
+                    comps.append({
+                        "type": "dialog",
+                        "id": cid,
+                        "mode": "Plan",
+                        "prompt": f"{stage_header} Transition to next phase."
+                    })
+
+            if is_cond:
+                cid = len(comps)
+                # Smart goto: if this condition follows an action in the classified list,
+                # it's verifying that action → FALSE goes back to redo it
+                if step_idx > 0 and not classified[step_idx - 1][1]:
+                    # Condition verifies the previous action → FALSE back to action
+                    goto_false = last_action_cid if last_action_cid is not None else cid + 1
+                    goto_true = cid + 1  # TRUE → skip past the verification to next normal step
+                else:
+                    # Condition checks if next step is needed → FALSE to next comp, TRUE skip
+                    goto_false = cid + 1
+                    goto_true = goto_false + 1
+                comps.append({
+                    "type": "logic",
+                    "id": cid,
+                    "prompt": step_text,
+                    "goto_true": goto_true,
+                    "goto_false": goto_false
+                })
+            else:
+                cid = len(comps)
+                mode = "Build"
+                if stage_idx == 0 and pos_in_stage == 0:
+                    mode = "Plan"
+                enriched = f"{stage_header} {step_text}"
+                comps.append({
+                    "type": "dialog",
+                    "id": cid,
+                    "mode": mode,
+                    "prompt": enriched
+                })
+                last_action_cid = cid
+
+                # Harness-inspired failure check after each Build action
+                if mode == "Build" and not is_template:
+                    cid = len(comps)
+                    comps.append({
+                        "type": "logic",
+                        "id": cid,
+                        "prompt": f"Did the previous step '{step_text[:50]}' complete successfully?",
+                        "goto_true": cid + 1,
+                        "goto_false": cid - 1  # re-execute on failure
+                    })
+
+        # Add approval gate between stages (Harness approval stage pattern)
+        if stage_idx < len(stage_groups) - 1:
             cid = len(comps)
-            # goto_false = next component (implement the thing being checked)
-            goto_false = cid + 1
-            # goto_true = skip implementation, go past it
-            # Scan ahead to find what component follows the "implement" step
-            # The "implement" step is the component right after us (goto_false)
-            # So goto_true = goto_false + 1 (the step after implementation)
-            goto_true = goto_false + 1
             comps.append({
                 "type": "logic",
                 "id": cid,
-                "prompt": step_text,
-                "goto_true": goto_true,
-                "goto_false": goto_false
+                "prompt": f"Manual approval: proceed to next stage?",
+                "goto_true": cid + 1,
+                "goto_false": cid  # wait at gate until approved
             })
-        else:
+
+    # Terminal: add a Goal completion if last component isn't already a goal-worthy step
+    if comps:
+        last = comps[-1]
+        if last["type"] != "dialog" or last.get("mode") != "Goal":
             cid = len(comps)
-            mode = _gen_assign_mode(len(comps), len(classified) * 2, step_text)
-            # If previous component is a logic, promote to Build
-            if comps and comps[-1].get("type") == "logic":
-                mode = "Build"
+            last_bit = classified[-1][0][:60] if classified else "pipeline"
             comps.append({
                 "type": "dialog",
                 "id": cid,
-                "mode": mode,
-                "prompt": step_text
+                "mode": "Goal",
+                "prompt": f"Goal: Pipeline complete. Verify all outputs and finalize. Last step: {last_bit}"
             })
 
-    # If last component is logic, add a completion Goal dialog
-    if comps and comps[-1]["type"] == "logic":
-        comps.append({
-            "type": "dialog",
-            "id": len(comps),
-            "mode": "Goal",
-            "prompt": f"Verify all requirements are met: {classified[-1][0]}"
-        })
-
-    # Renumber IDs sequentially
+    # Renumber IDs sequentially and fix goto targets
     for i, c in enumerate(comps):
         c["id"] = i
 
-    # Fix logic goto targets after renumbering.
-    # If goto points past the last component, set it to a terminal value:
-    # the last dialog component (clean ending) if one exists, otherwise the last component.
     n_comps = len(comps)
     term_id = n_comps - 1
-    # Prefer the last DIALOG component as terminal (Goal mode usually)
     for c in reversed(comps):
         if c["type"] == "dialog":
             term_id = c["id"]
@@ -773,6 +1052,9 @@ def cmd_gen(args):
                 c["goto_true"] = term_id
             if c["goto_false"] > n_comps - 1:
                 c["goto_false"] = term_id
+            # Self-looping approval gate: cap to itself (wait)
+            if c["goto_false"] > n_comps - 1:
+                c["goto_false"] = c["id"]
 
     wf = FlowWorkflow(name)
     for c_data in comps:
@@ -788,15 +1070,14 @@ def cmd_gen(args):
     lc = sum(1 for c in wf.components if c.type == "logic")
     template_tag = " [TEMPLATE]" if is_template else ""
     print(f"Created: {d}/{name}.Flow.json{template_tag}")
-    print(f"  Name: {name}")
-    print(f"  Components: {len(wf.components)} ({dc} dialog + {lc} logic)")
-    print(f"  Description: {describe_workflow(name, d)}")
+    print(f"  Pipeline: {ptype.upper()}  |  Components: {len(wf.components)} ({dc} dialog + {lc} logic)")
+    print(f"  Stages: {len(stage_groups)}  |  Description: {describe_workflow(name, d)}")
     if is_template:
         print(f"  Template: uses {'{#prompt#}'} — accepts user input at runtime")
 
     for c in sorted(wf.components, key=lambda x: x.id):
         if isinstance(c, FlowDialogComponent):
-            pr = c.prompt[:60] + "..." if len(c.prompt) > 60 else c.prompt
+            pr = c.prompt[:70] + "..." if len(c.prompt) > 70 else c.prompt
             print(f"    [{c.id:02d}] DIALOG  mode={c.mode:5s}  {pr}")
         elif isinstance(c, FlowLogicComponent):
             pr = c.prompt[:60] + "..." if len(c.prompt) > 60 else c.prompt
