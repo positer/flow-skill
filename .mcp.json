@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flow-workflow": {
+      "command": "python",
+      "args": [
+        "./bin/flow-mcp.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

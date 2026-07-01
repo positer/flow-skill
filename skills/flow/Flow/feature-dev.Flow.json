@@ -1,0 +1,37 @@
+{
+  "name": "feature-dev",
+  "components": [
+    {
+      "type": "dialog",
+      "id": 0,
+      "mode": "Plan",
+      "prompt": "Read project README and existing code structure. Identify all files and modules relevant to the feature request: {#prompt#}. Produce a step-by-step implementation plan."
+    },
+    {
+      "type": "logic",
+      "id": 1,
+      "prompt": "Is the implementation plan clear and complete? Are all dependencies identified and all affected files listed?",
+      "goto_true": 2,
+      "goto_false": 0
+    },
+    {
+      "type": "dialog",
+      "id": 2,
+      "mode": "Build",
+      "prompt": "Implement the feature: {#prompt#}. Follow project coding conventions. Write production code first, then add or update tests. Keep changes minimal and focused."
+    },
+    {
+      "type": "logic",
+      "id": 3,
+      "prompt": "Do all existing and new tests pass? Is the implementation free of obvious bugs (edge cases handled, error paths covered)?",
+      "goto_true": 4,
+      "goto_false": 2
+    },
+    {
+      "type": "dialog",
+      "id": 4,
+      "mode": "Goal",
+      "prompt": "Goal: Feature '{#prompt#}' is implemented, tested, and ready. Verify: (1) all new files follow conventions, (2) existing functionality is preserved, (3) documentation is updated if needed. Mark the goal as complete."
+    }
+  ]
+}

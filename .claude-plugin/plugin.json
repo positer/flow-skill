@@ -1,0 +1,18 @@
+{
+  "name": "flow-workflow",
+  "version": "1.1.0",
+  "description": "Flow workflow skill and callable tools for chat-visible Build/Plan/Goal and Logic workflows.",
+  "author": {
+    "name": "12252"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "flow",
+    "workflow",
+    "skill",
+    "mcp",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

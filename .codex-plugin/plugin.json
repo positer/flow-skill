@@ -1,0 +1,36 @@
+{
+  "name": "flow-workflow",
+  "version": "1.1.0",
+  "description": "Flow workflow skill and callable tools for chat-visible Build/Plan/Goal and Logic workflows.",
+  "author": {
+    "name": "12252"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "flow",
+    "workflow",
+    "skill",
+    "mcp",
+    "codex",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Flow Workflow",
+    "shortDescription": "Run saved Flow workflows as visible chat steps",
+    "longDescription": "Create, edit, validate, fuzzy-match, and execute Flow/{name}.Flow.json workflows with dialog components, logic branching, and chat-area step rendering.",
+    "developerName": "12252",
+    "category": "Productivity",
+    "capabilities": [
+      "Workflow",
+      "MCP",
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "/Flow 整理工作区",
+      "Open the Flow workflow editor",
+      "Run the feature-dev Flow workflow"
+    ]
+  }
+}
